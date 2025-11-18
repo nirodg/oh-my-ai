@@ -11,13 +11,16 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+# Configuration
+REPO_URL="https://raw.githubusercontent.com/nirodg/oh-my-ai/main"
+MAIN_SCRIPT="oh-my-ai.sh"
+INSTALL_NAME="ai.sh"
 TARGET_DIR="$HOME/.local/bin"
-SCRIPT_NAME="ai.sh"
 
-log_info() { echo -e "${BLUE}🤖 $1${NC}"; }
-log_success() { echo -e "${GREEN}✓ $1${NC}"; }
-log_warning() { echo -e "${YELLOW}⚠ $1${NC}"; }
-log_error() { echo -e "${RED}✗ $1${NC}"; }
+log_info() { echo -e "${BLUE}🤖 $1${NC}" >&2; }
+log_success() { echo -e "${GREEN}✓ $1${NC}" >&2; }
+log_warning() { echo -e "${YELLOW}⚠ $1${NC}" >&2; }
+log_error() { echo -e "${RED}✗ $1${NC}" >&2; }
 
 create_directory() {
     if [ ! -d "$1" ]; then
@@ -26,250 +29,178 @@ create_directory() {
 }
 
 download_script() {
-    log_info "Downloading Oh My AI script..."
+    local download_url="$REPO_URL/$MAIN_SCRIPT"
+    local temp_file="/tmp/ai_install_$$.sh"
     
-    # Create the main AI script content
-    cat > /tmp/ai_temp.sh << 'EOF'
-#!/bin/bash
-
-# Oh My AI - Intelligent Shell Assistant
-# Installation: curl -s https://raw.githubusercontent.com/nirodg/oh-my-ai/main/install-ai.sh | bash
-
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    echo "🤖 Oh My AI - This script should be sourced, not executed directly."
-    echo "Usage: source ~/.local/bin/ai.sh"
-    exit 1
-fi
-
-OLLAMA_MODEL="${OLLAMA_MODEL:-llama3.2}"
-OLLAMA_HOST="${OLLAMA_HOST:-http://localhost:11434}"
-WORK_DIR="$(pwd)"
-MAX_FILE_SIZE=100000
-
-BLUE='\033[0;34m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-if [ -n "$ZSH_VERSION" ]; then
-    SHELL_TYPE="zsh"
-elif [ -n "$BASH_VERSION" ]; then
-    SHELL_TYPE="bash"
-else
-    SHELL_TYPE="unknown"
-fi
-
-check_ollama() {
-    if ! command -v ollama &> /dev/null; then
-        echo -e "${YELLOW}⚠️  Ollama not found. Install from: https://ollama.ai${NC}"
-        return 1
-    fi
-    if ! ollama list &> /dev/null; then
-        echo -e "${YELLOW}⚠️  Ollama service not running. Start with: ollama serve${NC}"
-        return 1
-    fi
-    return 0
-}
-
-read_file() {
-    local filepath="$1"
-    local abs_path=$(realpath "$filepath" 2>/dev/null)
+    # Log to stderr so it doesn't interfere with the file path output
+    log_info "Downloading Oh My AI from GitHub..." >&2
+    log_info "URL: $download_url" >&2
     
-    if [ $? -ne 0 ] || [ ! -f "$abs_path" ] || [ ! -r "$abs_path" ]; then
-        echo -e "${RED}✗ Cannot read file: $filepath${NC}" >&2
-        return 1
-    fi
-    
-    if [[ "$abs_path" != "$WORK_DIR"* ]]; then
-        echo -e "${RED}✗ Access denied: File outside work directory${NC}" >&2
-        return 1
-    fi
-    
-    local size=$(stat -f%z "$abs_path" 2>/dev/null || stat -c%s "$abs_path" 2>/dev/null)
-    if [ "$size" -gt "$MAX_FILE_SIZE" ]; then
-        head -c $MAX_FILE_SIZE "$abs_path"
-    else
-        cat "$abs_path"
-    fi
-}
-
-gather_context() {
-    local context=""
-    context+="Working directory: $WORK_DIR\n"
-    context+="Current directory: $(pwd)\n"
-    context+="Files: $(ls -la 2>/dev/null | head -20)\n\n"
-    context+="Command history (last 10):\n"
-    context+="$(history 10 2>/dev/null || echo 'History not available')\n\n"
-    context+="OS: $(uname -s)\nShell: $SHELL\nUser: $USER\n"
-    
-    if git rev-parse --git-dir > /dev/null 2>&1; then
-        context+="Git branch: $(git branch --show-current 2>/dev/null)\n"
-        context+="Git status:\n$(git status -s 2>/dev/null)\n"
-    fi
-    
-    echo -e "$context"
-}
-
-is_safe_command() {
-    local cmd="$1"
-    local dangerous_patterns=("rm -rf /" "dd if=" "mkfs" "> /dev/sda" "mv /* ")
-    
-    for pattern in "${dangerous_patterns[@]}"; do
-        if [[ "$cmd" == *"$pattern"* ]]; then
-            echo -e "${RED}⛔ Dangerous command blocked${NC}"
+    if command -v curl > /dev/null 2>&1; then
+        log_info "Using curl to download..." >&2
+        if curl -s -f -L "$download_url" -o "$temp_file" 2>/dev/null; then
+            log_success "Download completed successfully" >&2
+            echo "$temp_file"
+            return 0
+        else
+            log_error "curl failed to download from: $download_url" >&2
             return 1
         fi
-    done
-    
-    if [[ "$cmd" == *"cd /"* ]] || [[ "$cmd" == *"cd ~"* ]]; then
-        echo -e "${RED}⛔ Cannot leave work directory${NC}"
-        return 1
-    fi
-    
-    return 0
-}
-
-ai() {
-    if [ "$1" = "help" ] || [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-        echo -e "${CYAN}🤖 Oh My AI - Available Commands:${NC}"
-        echo "  ai <question>          - Ask anything"
-        echo "  ai explain             - Explain last command"
-        echo "  ai debug               - Debug failed command"
-        echo "  readfile <file>        - Analyze a file"
-        echo "  compare <f1> <f2>      - Compare files"
-        return 0
-    fi
-    
-    if [ -z "$1" ]; then
-        echo -e "${YELLOW}Usage: ai <your question>${NC}"
-        echo "Examples: ai what does this do?, ai explain, ai debug"
-        return 1
-    fi
-    
-    if ! check_ollama; then
-        return 1
-    fi
-    
-    local full_query="$*"
-    local context=$(gather_context)
-    
-    echo -e "${BLUE}🤖 Processing your request...${NC}"
-    
-    local prompt="You are a helpful shell assistant. Context:\n$context\n\nUser request: $full_query\n\nProvide helpful, concise response:"
-    
-    local response=$(printf '%s' "$prompt" | ollama run "$OLLAMA_MODEL" 2>/dev/null)
-    
-    if [ -z "$response" ]; then
-        echo -e "${RED}✗ Failed to get response from Ollama${NC}"
-        return 1
-    fi
-    
-    echo "$response"
-    echo -e "\n${GREEN}───────────────────────────────${NC}"
-}
-
-readfile() {
-    if [ -z "$1" ]; then
-        echo -e "${YELLOW}Usage: readfile <filename> [question]${NC}"
-        return 1
-    fi
-    
-    local content=$(read_file "$1")
-    if [ $? -ne 0 ]; then
-        return 1
-    fi
-    
-    local question="${*:2}"
-    local prompt="File content:\n$content\n\n"
-    
-    if [ -z "$question" ]; then
-        prompt+="Analyze this file and explain what it does:"
+    elif command -v wget > /dev/null 2>&1; then
+        log_info "Using wget to download..." >&2
+        if wget -q "$download_url" -O "$temp_file" 2>/dev/null; then
+            log_success "Download completed successfully" >&2
+            echo "$temp_file"
+            return 0
+        else
+            log_error "wget failed to download from: $download_url" >&2
+            return 1
+        fi
     else
-        prompt+="$question"
+        log_error "Neither curl nor wget found. Please install one of them." >&2
+        return 1
     fi
-    
-    echo -e "${CYAN}📖 Analyzing $1...${NC}"
-    printf '%s' "$prompt" | ollama run "$OLLAMA_MODEL"
 }
 
-explain() {
-    local last_cmd=$(history | tail -n 2 | head -n 1 | sed 's/^[ ]*[0-9]*[ ]*//' 2>/dev/null)
+validate_script() {
+    local script_path="$1"
     
-    if [ -z "$last_cmd" ]; then
-        echo "No recent command to explain"
+    log_info "Validating downloaded script: $script_path" >&2
+    
+    if [ ! -f "$script_path" ]; then
+        log_error "Downloaded file not found at: $script_path" >&2
         return 1
     fi
     
-    echo -e "${BLUE}💡 Explaining: $last_cmd${NC}"
-    ollama run "$OLLAMA_MODEL" "Explain what this shell command does and its purpose: $last_cmd"
-}
-
-debug() {
-    local exit_code=$?
-    if [ $exit_code -eq 0 ]; then
-        echo "Last command succeeded"
-        return 0
+    if [ ! -s "$script_path" ]; then
+        log_error "Downloaded file is empty" >&2
+        return 1
     fi
     
-    local last_cmd=$(history | tail -n 2 | head -n 1 | sed 's/^[ ]*[0-9]*[ ]*//' 2>/dev/null)
-    
-    echo -e "${RED}🐛 Debugging (exit: $exit_code): $last_cmd${NC}"
-    ollama run "$OLLAMA_MODEL" "This command failed with exit code $exit_code: $last_cmd. Explain why it might have failed and suggest a fix:"
-}
-
-if check_ollama; then
-    echo -e "${GREEN}✓ Oh My AI loaded! Type 'ai help' for help.${NC}"
-    
-    if [ "$SHELL_TYPE" = "zsh" ]; then
-        echo -e "${CYAN}Zsh features: tab completion, keybindings${NC}"
+    # Check file size
+    local file_size=$(wc -c < "$script_path" 2>/dev/null || echo "0")
+    if [ "$file_size" -lt 100 ]; then
+        log_error "Downloaded file is too small ($file_size bytes)" >&2
+        return 1
     fi
-fi
-
-export -f ai readfile explain debug 2>/dev/null
-EOF
-
-    echo "/tmp/ai_temp.sh"
+    
+    # Check if it contains our expected content
+    if ! grep -q "Oh My AI" "$script_path" 2>/dev/null; then
+        log_warning "File may not contain expected content, but continuing..." >&2
+    fi
+    
+    log_success "Script validation passed ($file_size bytes)" >&2
+    return 0
 }
 
 install_script() {
-    local temp_file="$1"
-    local target_file="$TARGET_DIR/$SCRIPT_NAME"
+    local source_file="$1"
+    local target_file="$TARGET_DIR/$INSTALL_NAME"
     
-    chmod +x "$temp_file"
-    cp "$temp_file" "$target_file"
-    log_success "Installed to: $target_file"
+    log_info "Installing script to: $target_file" >&2
+    
+    # Make executable
+    chmod +x "$source_file"
+    
+    # Copy to target location
+    cp "$source_file" "$target_file"
+    
+    log_success "Installed to: $target_file" >&2
 }
 
-check_path() {
-    if ! echo "$PATH" | tr ':' '\n' | grep -q "^$TARGET_DIR$"; then
-        log_warning "Adding $TARGET_DIR to PATH..."
+check_path_configuration() {
+    log_info "Checking PATH configuration..." >&2
+    
+    if echo "$PATH" | tr ':' '\n' | grep -q "^$TARGET_DIR$"; then
+        log_success "$TARGET_DIR is in PATH" >&2
+        return 0
+    else
+        log_warning "$TARGET_DIR is not in your PATH" >&2
         
+        # Detect shell and update appropriate config file
         if [ -n "$BASH_VERSION" ]; then
-            echo "export PATH=\"$TARGET_DIR:\$PATH\"" >> "$HOME/.bashrc"
-            log_success "Added to ~/.bashrc - run: source ~/.bashrc"
+            local config_file="$HOME/.bashrc"
+            log_info "Adding to $config_file" >&2
+            echo "# Added by Oh My AI installer" >> "$config_file"
+            echo "export PATH=\"$TARGET_DIR:\$PATH\"" >> "$config_file"
+            log_success "Updated $config_file - run: source $config_file" >&2
+            
         elif [ -n "$ZSH_VERSION" ]; then
-            echo "export PATH=\"$TARGET_DIR:\$PATH\"" >> "$HOME/.zshrc"
-            log_success "Added to ~/.zshrc - run: source ~/.zshrc"
+            local config_file="$HOME/.zshrc"
+            log_info "Adding to $config_file" >&2
+            echo "# Added by Oh My AI installer" >> "$config_file"
+            echo "export PATH=\"$TARGET_DIR:\$PATH\"" >> "$config_file"
+            log_success "Updated $config_file - run: source $config_file" >&2
+        else
+            log_warning "Please add this to your shell configuration:" >&2
+            echo "export PATH=\"$TARGET_DIR:\$PATH\"" >&2
         fi
+        return 1
     fi
 }
 
-setup_ollama() {
-    if ! command -v ollama &> /dev/null; then
-        log_warning "Ollama not found - required for AI features"
-        echo ""
-        echo "To install Ollama:"
-        echo "  curl -fsSL https://ollama.ai/install.sh | sh"
-        echo ""
-        read -p "Install Ollama now? (y/N): " -n 1 -r
+setup_ollama_if_needed() {
+    log_info "Checking Ollama installation..." >&2
+    
+    if command -v ollama > /dev/null 2>&1; then
+        log_success "Ollama is installed" >&2
+        if ollama list > /dev/null 2>&1; then
+            log_success "Ollama service is running" >&2
+        else
+            log_warning "Ollama service is not running" >&2
+            echo "Start it with: ollama serve" >&2
+        fi
+    else
+        log_warning "Ollama not found - required for AI features" >&2
+        echo "" >&2
+        echo "To install Ollama:" >&2
+        echo "  curl -fsSL https://ollama.ai/install.sh | sh" >&2
+        echo "" >&2
+        read -p "Would you like to install Ollama now? (y/N): " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
-            log_info "Installing Ollama..."
+            log_info "Installing Ollama..." >&2
             curl -fsSL https://ollama.ai/install.sh | sh
+        else
+            log_info "You can install Ollama later from: https://ollama.ai" >&2
         fi
     fi
+}
+
+test_installation() {
+    log_info "Testing installation..." >&2
+    
+    if [ -f "$TARGET_DIR/$INSTALL_NAME" ]; then
+        log_success "Script installed successfully at: $TARGET_DIR/$INSTALL_NAME" >&2
+        return 0
+    else
+        log_error "Installation test failed - script not found" >&2
+        return 1
+    fi
+}
+
+show_post_install() {
+    echo ""
+    log_success "🎉 Installation Complete!"
+    echo ""
+    log_info "Next steps:"
+    echo "  1. Add this to your shell configuration:"
+    echo "     source $TARGET_DIR/$INSTALL_NAME"
+    echo ""
+    echo "  2. Or add it permanently to your ~/.bashrc or ~/.zshrc:"
+    echo "     echo 'source $TARGET_DIR/$INSTALL_NAME' >> ~/.bashrc"
+    echo ""
+    echo "  3. Then reload your shell:"
+    echo "     source ~/.bashrc  # or source ~/.zshrc"
+    echo ""
+    echo "  4. Start using:"
+    echo "     ai help"
+    echo ""
+    log_info "Examples:"
+    echo "  ai what does this script do?"
+    echo "  ai explain the last command"
+    echo "  readfile script.sh"
+    echo "  debug"
 }
 
 main() {
@@ -278,23 +209,56 @@ main() {
     echo -e "${CYAN}═══════════════════════════════════════════════════${NC}"
     echo ""
     
+    log_info "Target directory: $TARGET_DIR"
+    log_info "Repository: $REPO_URL"
+    echo ""
+    
+    # Create target directory
     create_directory "$TARGET_DIR"
     
-    local script_file=$(download_script)
-    install_script "$script_file"
+    # Download the main script
+    log_info "Starting download process..."
+    local downloaded_file
+    downloaded_file=$(download_script)
+    local download_result=$?
     
-    check_path
-    setup_ollama
+    if [ $download_result -ne 0 ] || [ -z "$downloaded_file" ]; then
+        log_error "Failed to download the script"
+        echo ""
+        log_info "You can try manual installation:"
+        echo "  curl -s -L $REPO_URL/$MAIN_SCRIPT -o $TARGET_DIR/$INSTALL_NAME"
+        echo "  chmod +x $TARGET_DIR/$INSTALL_NAME"
+        echo "  echo 'source $TARGET_DIR/$INSTALL_NAME' >> ~/.bashrc"
+        exit 1
+    fi
     
-    echo ""
-    log_success "🎉 Installation Complete!"
-    echo ""
-    echo -e "${CYAN}Next steps:${NC}"
-    echo "  1. Reload shell: source ~/.bashrc (or ~/.zshrc)"
-    echo "  2. Test: ai help"
-    echo "  3. Ensure Ollama is running: ollama serve"
-    echo ""
-    echo -e "${GREEN}Enjoy your AI-powered shell! 🚀${NC}"
+    log_info "Downloaded to: $downloaded_file"
+    
+    # Validate the downloaded script
+    if ! validate_script "$downloaded_file"; then
+        log_error "Script validation failed"
+        rm -f "$downloaded_file"
+        exit 1
+    fi
+    
+    # Install the script
+    install_script "$downloaded_file"
+    
+    # Clean up temp file
+    rm -f "$downloaded_file"
+    
+    # Check and configure PATH
+    check_path_configuration
+    
+    # Test installation
+    test_installation || exit 1
+    
+    # Setup Ollama
+    setup_ollama_if_needed
+    
+    # Show post-install instructions
+    show_post_install
 }
 
+# Run main function
 main "$@"
