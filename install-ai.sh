@@ -106,6 +106,8 @@ install_script() {
     cp "$source_file" "$target_file"
     
     log_success "Installed to: $target_file" >&2
+
+    source $target_file
 }
 
 check_path_configuration() {
