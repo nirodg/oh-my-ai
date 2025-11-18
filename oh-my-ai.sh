@@ -1,5 +1,26 @@
 #!/bin/bash
 
+#!/bin/bash
+
+# AI Shell Assistant - Ollama-powered Bash/Zsh Assistant
+# Installation: curl -s https://raw.githubusercontent.com/yourusername/super-bash/main/install-ai.sh | bash
+# Repository: https://github.com/yourusername/super-bash
+
+# Check if script is being run directly or sourced
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    echo "🤖 AI Shell Assistant"
+    echo ""
+    echo "This script is designed to be sourced, not executed directly."
+    echo ""
+    echo "To install:"
+    echo "  curl -s https://raw.githubusercontent.com/yourusername/super-bash/main/install-ai.sh | bash"
+    echo ""
+    echo "Then add to your shell:"
+    echo "  source ~/.local/bin/ai.sh"
+    echo ""
+    exit 1
+fi
+
 # ai.sh - Ollama-powered Bash/Zsh Assistant
 # A smart shell assistant that understands your environment and can execute commands safely
 
