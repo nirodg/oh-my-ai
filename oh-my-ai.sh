@@ -31,6 +31,9 @@ HISTORY_LINES=20
 WORK_DIR="$(pwd)"  # Lock to the directory where helper was sourced
 MAX_FILE_SIZE=100000  # Max file size to read (100KB)
 AI_CONFIG_FILE="${HOME}/.ai_sh_config"
+OH_MY_AI_DIR="${HOME}/.oh-my-ai"
+UPDATE_FILE="${OH_MY_AI_DIR}/last_update_check"
+UPDATE_INFO_FILE="${OH_MY_AI_DIR}/update_info"
 
 # Colors for output
 BLUE='\033[0;34m'
@@ -50,6 +53,91 @@ else
     SHELL_TYPE="unknown"
 fi
 
+# Auto-update functionality
+# Enhanced auto-update functionality
+check_for_updates() {
+    # Create oh-my-ai directory if it doesn't exist
+    mkdir -p "$OH_MY_AI_DIR"
+    
+    local current_script="$0"
+    local repo_url="https://raw.githubusercontent.com/nirodg/oh-my-ai/main/oh-my-ai.sh"
+    
+    # Only check once per day
+    if [ -f "$UPDATE_FILE" ]; then
+        local last_check=$(stat -f %m "$UPDATE_FILE" 2>/dev/null || stat -c %Y "$UPDATE_FILE" 2>/dev/null)
+        local now=$(date +%s)
+        local hours_since_check=$(( (now - last_check) / 3600 ))
+        
+        if [ $hours_since_check -lt 24 ]; then
+            return 0
+        fi
+    fi
+    
+    touch "$UPDATE_FILE"
+    
+    log_info "🔍 Checking for updates..." >&2
+    
+    # Get current version info
+    local current_version=$(stat -f %m "$current_script" 2>/dev/null || stat -c %Y "$current_script" 2>/dev/null)
+    local current_hash=$(sha256sum "$current_script" 2>/dev/null | cut -d' ' -f1)
+    
+    # Download latest version to compare
+    local temp_file="/tmp/ai_latest_$$.sh"
+    
+    if command -v curl > /dev/null 2>&1; then
+        if ! curl -s -f -L "$repo_url" -o "$temp_file" 2>/dev/null; then
+            rm -f "$temp_file"
+            return 1
+        fi
+    elif command -v wget > /dev/null 2>&1; then
+        if ! wget -q "$repo_url" -O "$temp_file" 2>/dev/null; then
+            rm -f "$temp_file"
+            return 1
+        fi
+    else
+        return 1
+    fi
+    
+    if [ ! -f "$temp_file" ] || [ ! -s "$temp_file" ]; then
+        rm -f "$temp_file"
+        return 1
+    fi
+    
+    local latest_hash=$(sha256sum "$temp_file" 2>/dev/null | cut -d' ' -f1)
+    
+    # Store update info
+    cat > "$UPDATE_INFO_FILE" << EOF
+# Oh My AI Update Information
+LAST_CHECKED=$(date +%Y-%m-%d\ %H:%M:%S)
+CURRENT_VERSION=$current_hash
+LATEST_VERSION=$latest_hash
+UPDATE_AVAILABLE=$([ "$current_hash" != "$latest_hash" ] && echo "true" || echo "false")
+EOF
+    
+    if [ "$current_hash" != "$latest_hash" ] && [ -n "$current_hash" ] && [ -n "$latest_hash" ]; then
+        echo -e "${YELLOW}🔄 Update available for Oh My AI!${NC}" >&2
+        echo -e "${CYAN}Current: $(date -r "$current_script" 2>/dev/null || echo "unknown")${NC}" >&2
+        echo -e "${CYAN}Latest:  $(date -r "$temp_file" 2>/dev/null || echo "unknown")${NC}" >&2
+        echo "" >&2
+        
+        # Ask user if they want to update
+        echo -e "${BLUE}Would you like to update now? (Y/n)${NC}" >&2
+        read -r response
+        
+        if [[ "$response" =~ ^[Yy]$ ]] || [ -z "$response" ]; then
+            echo -e "${GREEN}🚀 Starting update...${NC}" >&2
+            update_ai
+        else
+            echo -e "${YELLOW}Update skipped. You can update later with: ai update${NC}" >&2
+        fi
+        echo "" >&2
+    else
+        echo -e "${GREEN}✓ Oh My AI is up to date${NC}" >&2
+    fi
+    
+    rm -f "$temp_file"
+}
+
 # ============================================================================
 # OLLAMA SETUP AND CONNECTIVITY
 # ============================================================================
@@ -60,6 +148,10 @@ load_config() {
         source "$AI_CONFIG_FILE"
     fi
 }
+
+if [ -z "$OH_MY_AI_NO_UPDATE" ]; then
+    (check_for_updates &) > /dev/null 2>&1
+fi
 
 # Save configuration
 save_config() {
@@ -443,13 +535,103 @@ safe_execute() {
     
     return $exit_code
 }
+
+# Update command
+# Update command with better feedback
+update_ai() {
+    echo -e "${BLUE}🚀 Updating Oh My AI...${NC}"
+    
+    # Create oh-my-ai directory if it doesn't exist
+    mkdir -p "$OH_MY_AI_DIR"
+    
+    # Store update attempt
+    cat > "$UPDATE_INFO_FILE" << EOF
+# Oh My AI Update Information
+LAST_UPDATE_ATTEMPT=$(date +%Y-%m-%d\ %H:%M:%S)
+UPDATE_STATUS=in_progress
+EOF
+    
+    local update_success=false
+    
+    if command -v curl > /dev/null 2>&1; then
+        echo -e "${CYAN}Using curl to update...${NC}"
+        if curl -s https://raw.githubusercontent.com/nirodg/oh-my-ai/main/install-ai.sh | bash; then
+            update_success=true
+        fi
+    elif command -v wget > /dev/null 2>&1; then
+        echo -e "${CYAN}Using wget to update...${NC}"
+        if wget -q -O - https://raw.githubusercontent.com/nirodg/oh-my-ai/main/install-ai.sh | bash; then
+            update_success=true
+        fi
+    else
+        echo -e "${RED}✗ Neither curl nor wget found${NC}"
+    fi
+    
+    # Update status file
+    if [ "$update_success" = true ]; then
+        cat > "$UPDATE_INFO_FILE" << EOF
+# Oh My AI Update Information
+LAST_SUCCESSFUL_UPDATE=$(date +%Y-%m-%d\ %H:%M:%S)
+UPDATE_STATUS=success
+EOF
+        echo -e "${GREEN}✓ Update completed successfully!${NC}"
+        echo -e "${CYAN}Please restart your shell or run: source ~/.local/bin/ai.sh${NC}"
+    else
+        cat > "$UPDATE_INFO_FILE" << EOF
+# Oh My AI Update Information
+LAST_FAILED_UPDATE=$(date +%Y-%m-%d\ %H:%M:%S)
+UPDATE_STATUS=failed
+EOF
+        echo -e "${RED}✗ Update failed${NC}"
+        echo -e "${YELLOW}You can try manual installation:${NC}"
+        echo "  curl -s https://raw.githubusercontent.com/nirodg/oh-my-ai/main/install-ai.sh | bash"
+    fi
+}
+
+# Show update information
+show_update_info() {
+    echo -e "${CYAN}🤖 Oh My AI - Version Information${NC}"
+    echo ""
+    
+    # Current script info
+    local current_script="$0"
+    echo -e "${BLUE}Current Installation:${NC}"
+    echo -e "  Path: $current_script"
+    echo -e "  Modified: $(date -r "$current_script" 2>/dev/null || echo "unknown")"
+    echo -e "  Hash: $(sha256sum "$current_script" 2>/dev/null | cut -d' ' -f1 | head -c 16)..."
+    echo ""
+    
+    # Update info from file
+    if [ -f "$UPDATE_INFO_FILE" ]; then
+        echo -e "${BLUE}Update Information:${NC}"
+        while IFS='=' read -r key value; do
+            if [[ ! $key =~ ^# ]] && [ -n "$key" ]; then
+                echo -e "  ${key}: $value"
+            fi
+        done < "$UPDATE_INFO_FILE"
+    else
+        echo -e "${YELLOW}No update information available${NC}"
+        echo -e "  Run 'ai update' to check for updates"
+    fi
+}
+
 # Main AI helper function with intelligent routing
 ai() {
     # Show help if requested
-    if [ "$1" = "help" ] || [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-        ai_help
-        return 0
-    fi
+    case "$1" in
+        "update"|"upgrade")
+            update_ai
+            return $?
+            ;;
+        "update-info"|"version")
+            show_update_info
+            return $?
+            ;;            
+        "help"|"--help"|"-h")
+            ai_help
+            return 0
+            ;;
+    esac
     
     if [ -z "$1" ]; then
         echo -e "${YELLOW}Usage: ai <your question or request>${NC}"
