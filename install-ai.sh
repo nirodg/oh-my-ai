@@ -106,39 +106,74 @@ install_script() {
     cp "$source_file" "$target_file"
     
     log_success "Installed to: $target_file" >&2
-
-    echo "source ~/.local/bin/ai.sh" >> ~/.zshrc
 }
 
 check_path_configuration() {
     log_info "Checking PATH configuration..." >&2
     
+    # Check if ~/.local/bin is in PATH
     if echo "$PATH" | tr ':' '\n' | grep -q "^$TARGET_DIR$"; then
         log_success "$TARGET_DIR is in PATH" >&2
-        return 0
     else
         log_warning "$TARGET_DIR is not in your PATH" >&2
         
         # Detect shell and update appropriate config file
         if [ -n "$BASH_VERSION" ]; then
             local config_file="$HOME/.bashrc"
-            log_info "Adding to $config_file" >&2
+            log_info "Adding $TARGET_DIR to PATH in $config_file" >&2
             echo "# Added by Oh My AI installer" >> "$config_file"
             echo "export PATH=\"$TARGET_DIR:\$PATH\"" >> "$config_file"
-            log_success "Updated $config_file - run: source $config_file" >&2
+            log_success "Updated $config_file" >&2
             
         elif [ -n "$ZSH_VERSION" ]; then
             local config_file="$HOME/.zshrc"
-            log_info "Adding to $config_file" >&2
+            log_info "Adding $TARGET_DIR to PATH in $config_file" >&2
             echo "# Added by Oh My AI installer" >> "$config_file"
             echo "export PATH=\"$TARGET_DIR:\$PATH\"" >> "$config_file"
-            log_success "Updated $config_file - run: source $config_file" >&2
+            log_success "Updated $config_file" >&2
         else
             log_warning "Please add this to your shell configuration:" >&2
             echo "export PATH=\"$TARGET_DIR:\$PATH\"" >&2
         fi
+    fi
+    
+    # Check if source command already exists in shell config
+    local source_line="source $TARGET_DIR/$INSTALL_NAME"
+    local config_file=""
+    
+    if [ -n "$BASH_VERSION" ]; then
+        config_file="$HOME/.bashrc"
+    elif [ -n "$ZSH_VERSION" ]; then
+        config_file="$HOME/.zshrc"
+    else
+        log_warning "Unknown shell, cannot auto-add source command" >&2
         return 1
     fi
+    
+    if [ -n "$config_file" ] && [ -f "$config_file" ]; then
+        log_info "Checking if source command already exists in $config_file" >&2
+        
+        # Check for various forms of the source command
+        if grep -q "source $TARGET_DIR/$INSTALL_NAME" "$config_file" || \
+           grep -q "source ~/.local/bin/ai.sh" "$config_file" || \
+           grep -q "\. $TARGET_DIR/$INSTALL_NAME" "$config_file" || \
+           grep -q "\. ~/.local/bin/ai.sh" "$config_file"; then
+            log_success "Source command already exists in $config_file" >&2
+        else
+            log_info "Adding source command to $config_file" >&2
+            echo "# Oh My AI Assistant" >> "$config_file"
+            echo "$source_line" >> "$config_file"
+            log_success "Added source command to $config_file" >&2
+            log_info "Run: source $config_file to apply changes" >&2
+        fi
+    else
+        log_warning "Config file $config_file not found, creating it..." >&2
+        echo "# Oh My AI Assistant" >> "$config_file"
+        echo "$source_line" >> "$config_file"
+        log_success "Created $config_file with source command" >&2
+    fi
+    
+    return 0
 }
 
 setup_ollama_if_needed() {
