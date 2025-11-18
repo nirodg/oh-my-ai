@@ -107,7 +107,7 @@ install_script() {
     
     log_success "Installed to: $target_file" >&2
 
-    source $target_file
+    echo "source ~/.local/bin/ai.sh" >> ~/.zshrc
 }
 
 check_path_configuration() {
