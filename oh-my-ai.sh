@@ -658,7 +658,7 @@ $content
 # Compare multiple files
 compare() {
     if [ $# -lt 2 ]; then
-        echo -e "${YELLOW}Usage: compare <file1> <file2> [file3...] [question]${NC}"
+        echo -e "${YELLOW}Usage: compare \<file1\> \<file2\> [file3...] [question]${NC}"
         echo "Example: compare old_config.json new_config.json what changed?"
         return 1
     fi
@@ -2027,6 +2027,8 @@ if [ "$SHELL_TYPE" = "zsh" ]; then
     echo -e "  ${BLUE}Alt+A${NC}      - Wrap with 'ai explain'"
     echo -e "  ${BLUE}Alt+E${NC}      - Wrap with 'ai create'"
     echo -e "  ${BLUE}Tab${NC}        - Autocomplete files and commands"
+    
+
 fi
 
 # ============================================================================
